@@ -25,7 +25,7 @@ class DiffieHellman:
         return self.public_key.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
 
     def compute_shared_key(self, peer_public_bytes: bytes):
-        # Reconstruct la clé publique de l’autre participant à partir du format PEM reçu
+        # Reconstruit la clé publique de l’autre participant à partir du format PEM reçu
         peer_public_key = serialization.load_pem_public_key(peer_public_bytes, backend=default_backend())
 
         # Effectue l’échange Diffie-Hellman : g^(ab) mod p
