@@ -1,5 +1,5 @@
 from cryptography.hazmat.primitives.asymmetric import dh
-from dh_ratchet import DiffieHellman
+from Secu.dh_ratchet import DiffieHellman
 
 # Initialisation commune des paramètres
 params = dh.generate_parameters(generator=2, key_size=2048)
