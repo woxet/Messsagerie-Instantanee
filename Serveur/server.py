@@ -20,7 +20,7 @@ def broadcast(sender_username, message):
         for username, conn in clients.items():
             if username != sender_username:
                 try:
-                    conn.sendall(f"[{sender_username}] {message}".encode())
+                    conn.sendall(f"[{sender_username}] {message}\n".encode())
                     log_message(sender_username, username, message, timestamp)
                 except Exception as e:
                     sys_logger.warning(f"Erreur lors de l'envoi à {username} : {e}")
