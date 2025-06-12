@@ -1,0 +1,14 @@
+[
+    {
+        "id": 0,
+        "name": "Alice",
+        "user_id": "alice",
+        "pass": "$2b$12$G7u4eHQ7bkHXZILlbWY.vOgvO91uCnYhgofpYA8oAqFGhyNKFF4RW"
+    },
+    {
+        "id": 1,
+        "name": "Bob",
+        "user_id": "bob",
+        "pass": "$2b$12$mXJtuTy7sP0bqp.Ld0QKQenU7Dza50aApuejXJFxlXxie/DSvJLua"
+    }
+]
