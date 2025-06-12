@@ -5,6 +5,8 @@ import socket
 import logging
 
 USER_DB = "user_db.json"
+logger = logging.getLogger("sys")
+
 
 def load_users():
     if not os.path.exists(USER_DB):
@@ -38,8 +40,8 @@ def login(user_id, password, conn: socket):
                 return True
             else:
                 conn.sendall("Mot de passe incorrect.\n".encode())
-                logging.warning(f"{user_id} mot de passe incorrect")
+                logger.warning(f"{user_id} mot de passe incorrect")
                 return False
     conn.sendall("Utilisateur non trouve.\n".encode())
-    logging.warning(f"{user_id} utilisateur inconnu")
+    logger.warning(f"{user_id} utilisateur inconnu")
     return False
