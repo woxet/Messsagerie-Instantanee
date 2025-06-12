@@ -14,3 +14,4 @@ L'application doit garantir plusieurs **propriétés de sécurité fondamentales
 - **Forward Secrecy** : la compromission d’une clé ne permet pas de déchiffrer les anciens messages.
 - **Backward Secrecy** : la compromission d’une clé ne permet pas de déchiffrer les futurs messages.
 
+Voir le [sujet](sujet.pdf) pour plus de détails.
