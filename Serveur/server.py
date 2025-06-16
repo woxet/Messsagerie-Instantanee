@@ -1,6 +1,7 @@
 import socket
 import threading
 from datetime import datetime
+import os
 
 from logger import *
 from authentificator import *
@@ -13,6 +14,10 @@ lock = threading.Lock()
 
 sys_logger = init_sys_logger()
 msg_logger = init_message_logger()
+
+talk_sessions = {}  # { username: destinataire }
+
+os.makedirs("conversations", exist_ok=True)
 
 def broadcast(sender_username, message):
     timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
@@ -57,38 +62,109 @@ def auth(conn: socket.socket):
         sys_logger.error(f"Erreur lors de l'authentification : {e}")
         return None
 
+def get_conversation_filename(user1, user2):
+    users = sorted([user1, user2])
+    return f"conversations/{users[0]}__{users[1]}.txt"
+
 def handle_client(conn: socket.socket, addr):
-    username = None
+    username = auth(conn)
+    if username is None:
+        conn.close()
+        return
+
+    with lock:
+        clients[username] = conn
+    talk_sessions[username] = None
+
     try:
-        username = auth(conn)
-        if username is None:
-            conn.close()
-            sys_logger.info(f"Connexion depuis {addr} fermée sans authentification")
-            return
-
-        with lock:
-            clients[username] = conn
-        sys_logger.info(f"{username} connecté depuis {addr}")
-
         while True:
-            message = conn.recv(1024).decode()
+            message = conn.recv(4096).decode().strip()
             if not message:
                 break
-            sys_logger.debug(f"Message reçu de {username}")
-            broadcast(username, message)
-    except Exception as e:
-        sys_logger.warning(f"Erreur avec le client {addr} : {e}")
+
+            # Commande /talk
+            if message.startswith("/talk "):
+                dest = message[6:].strip()
+                if dest == username:
+                    conn.sendall(f"[Système] Vous ne pouvez pas parler à vous-même.\n".encode())
+                    continue
+
+                talk_sessions[username] = dest
+
+                filename = get_conversation_filename(username, dest)
+                if os.path.exists(filename):
+                    with open(filename, "r", encoding="utf-8") as f:
+                        conn.sendall(f"[Historique avec {dest}]\n{f.read()}".encode())
+                else:
+                    conn.sendall(f"[Système] Nouvelle conversation avec {dest}.\n".encode())
+                continue
+
+            # Commande /exit
+            if message == "/exit":
+                other = talk_sessions.get(username)
+                talk_sessions[username] = None
+                conn.sendall(f"[Système] Conversation terminée.\n")
+
+                # Si l'autre est en conversation réciproque, on le libère aussi
+                if other and talk_sessions.get(other) == username:
+                    talk_sessions[other] = None
+                    other_conn = clients.get(other)
+                    if other_conn:
+                        try:
+                            other_conn.sendall(f"[Système] {username} a quitté la conversation.\n".encode())
+                        except:
+                            pass
+                continue
+
+
+            # Message en mode talk
+            dest = talk_sessions.get(username)
+            if dest:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                formatted = f"[{timestamp}] {username}: {message}\n"
+                filename = get_conversation_filename(username, dest)
+
+                with open(filename, "a", encoding="utf-8") as f:
+                    f.write(formatted)
+
+                # Envoi direct si les deux sont en talk l’un avec l’autre
+                with lock:
+                    if talk_sessions.get(dest) == username and dest in clients:
+                        try:
+                            clients[dest].sendall(formatted.encode())
+                        except Exception as e:
+                            sys_logger.warning(f"Échec d'envoi à {dest}: {e}")
+            else:
+                conn.sendall(f"[Système] Pas en conversation. Utilisez /talk <nom>\n".encode())
+
     finally:
+        # Retirer l'utilisateur courant
         with lock:
-            if username in clients:
-                del clients[username]
+            clients.pop(username, None)
+
+            # Libérer aussi la session talk de l'autre s'il y a réciprocité
+            other = talk_sessions.get(username)
+            talk_sessions.pop(username,*
+                               None)
+
+            if other and talk_sessions.get(other) == username:
+                talk_sessions[other] = None
+                other_conn = clients.get(other)
+                if other_conn:
+                    try:
+                        other_conn.sendall(f"[Système] {username} s’est déconnecté. Conversation terminée.\n".encode())
+                    except Exception as e:
+                        sys_logger.warning(f"Erreur lors de l’envoi au partenaire {other} : {e}")
+
+        # Fermer proprement la socket
         try:
             conn.shutdown(socket.SHUT_RDWR)
         except:
             pass
         conn.close()
         if username:
-            sys_logger.info(f"{username} s'est déconnecté")
+            sys_logger.info(f"{username} s’est déconnecté")
+
 
 def main():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
