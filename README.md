@@ -62,6 +62,7 @@ Commandes à connaitre :
 - Lancer une discussion : `/talk <user_id>`
 - Quitter une conversation : `/talk <other_user_id>` ou `/exit`
 - Clore la connexion : `/quit` ou `CTRL+C`
+- Obtenir les commandes : `/infos`
 
 ---
 ## Documentation
