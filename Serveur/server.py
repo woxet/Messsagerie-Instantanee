@@ -88,6 +88,11 @@ def handle_client(conn: socket.socket, addr):
                 if dest == username:
                     conn.sendall(f"[Système] Vous ne pouvez pas parler à vous-même.\n".encode())
                     continue
+                
+                users = load_users()
+                if dest not in (u["user_id"] for u in users):
+                    conn.sendall(f"[Système] Utilisateur inconnu.\n".encode())
+                    continue
 
                 talk_sessions[username] = dest
 
@@ -103,17 +108,6 @@ def handle_client(conn: socket.socket, addr):
             if message == "/exit":
                 other = talk_sessions.get(username)
                 talk_sessions[username] = None
-                conn.sendall(f"[Système] Conversation terminée.\n")
-
-                # Si l'autre est en conversation réciproque, on le libère aussi
-                if other and talk_sessions.get(other) == username:
-                    talk_sessions[other] = None
-                    other_conn = clients.get(other)
-                    if other_conn:
-                        try:
-                            other_conn.sendall(f"[Système] {username} a quitté la conversation.\n".encode())
-                        except:
-                            pass
                 continue
 
 
@@ -171,7 +165,8 @@ def main():
     server.bind((HOST, PORT))
     server.listen()
     sys_logger.info(f"Serveur en écoute sur {HOST}:{PORT}")
-
+    #print the current process id
+    sys_logger.info(f"Serveur PID : {os.getpid()}")
     threads = []
 
     try:
