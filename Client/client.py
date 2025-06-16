@@ -2,6 +2,7 @@ import socket
 import threading
 import sys
 import signal
+import os
 
 HOST = "127.0.0.1"
 PORT = 5000
@@ -10,6 +11,9 @@ current_target = None
 auth_done = threading.Event()
 stop_event = threading.Event()
 
+
+def get_infos():
+    print("\nCommandes disponibles :\n- Lancer une discussion        : /talk <user_id>\n- Quitter une conversation     : /talk <other_user_id> ou /exit\n- Clore la connexion           : /quit ou CTRL+C\n- Obtenir les commandes        : /infos\n>", end="")
 
 def receive_messages(sock):
     while not stop_event.is_set():
@@ -20,6 +24,7 @@ def receive_messages(sock):
             print(message, end="")
             sys.stdout.flush()
             if message.startswith("Bienvenue, "):  # détection du message de bienvenue
+                get_infos()
                 auth_done.set()
         except:
             break
@@ -44,8 +49,14 @@ def send_messages(sock):
             # Authentifié ici
             if message.lower() == "/quit":
                 stop_event.set()
+                os.system('cls' if os.name == 'nt' else 'clear')
+                get_infos()
                 break
+            elif message.lower() == "/infos":
+                get_infos()
+                continue
             elif message.startswith("/talk "):
+                os.system('cls' if os.name == 'nt' else 'clear')
                 dest = message[6:].strip()
                 if dest:
                     current_target = dest
@@ -65,6 +76,7 @@ def send_messages(sock):
     stop_event.set()
 
 def main():
+    os.system('cls' if os.name == 'nt' else 'clear')
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         client.connect((HOST, PORT))
