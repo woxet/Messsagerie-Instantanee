@@ -15,3 +15,38 @@ L'application doit garantir plusieurs **propriétés de sécurité fondamentales
 - **Backward Secrecy** : la compromission d’une clé ne permet pas de déchiffrer les futurs messages.
 
 Voir le [sujet](sujet.pdf) pour plus de détails.
+
+------
+
+## Installation
+### Requirements
+```bash 
+python -m pip install -r requirements.txt
+```
+
+## Lancement
+### Serveur
+Démarrer le serveur en premier :
+```bash
+cd Serveur
+python serveur.py
+```
+
+Eteindre le serveur : `CTRL+C`
+
+### Client
+Lancer une instance client :
+```bash
+cd Client
+python client.py
+```
+
+Commandes à connaitre :
+- Lancer une discussion : `/talk <user_id>`
+- Quitter une conversation : `/talk <other_user_id>` ou `/exit`
+- Clore la connexion : `/quit` ou `CTRL+C`
+
+---
+## Documentation
+[Double Ratchet](https://fr.wikipedia.org/wiki/Algorithme_%C3%A0_Double_Ratchet) (Wikipédia)
+[Double Ratchet](https://signal.org/docs/specifications/doubleratchet/doubleratchet.pdf) (Signal)
