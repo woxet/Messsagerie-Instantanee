@@ -20,7 +20,24 @@ Voir le [sujet](sujet.pdf) pour plus de détails.
 
 ## Installation
 ### Requirements
+- Créer le venv :
 ```bash 
+python -m venv venv
+```
+
+- Selectionner le venv :
+
+| Platform | Shell         | Commande pour activer l'environnement virtuel |
+|----------|---------------|-----------------------------------------------|
+| POSIX    | bash/zsh      | `$ source venv/bin/activate`                  |
+|          | fish          | `$ source venv/bin/activate.fish`             |
+|          | csh/tcsh      | `$ source venv/bin/activate.csh`              |
+|          | pwsh          | `$ venv/bin/Activate.ps1`                     |
+| Windows  | cmd.exe       | `C:\> venv\Scripts\activate.bat`              |
+|          | PowerShell    | `PS C:\> venv\Scripts\Activate.ps1`           |
+
+- Installer les librairies : 
+```bash
 python -m pip install -r requirements.txt
 ```
 
