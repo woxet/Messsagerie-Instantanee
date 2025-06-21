@@ -193,5 +193,11 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Dossiers de données
 conversations/
 logs/
+
+# Certificats
+*.pem
+*.crt
+*.key
