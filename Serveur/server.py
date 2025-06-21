@@ -2,6 +2,7 @@ import socket
 import threading
 from datetime import datetime
 import os
+import ssl
 
 from logger import *
 from authentificator import *
@@ -159,23 +160,30 @@ def handle_client(conn: socket.socket, addr):
         if username:
             sys_logger.info(f"{username} s’est déconnecté")
 
-
 def main():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, PORT))
     server.listen()
-    sys_logger.info(f"Serveur en écoute sur {HOST}:{PORT}")
-    #print the current process id
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile="server.crt", keyfile="server.key")
+
     sys_logger.info(f"Serveur PID : {os.getpid()}")
+    sys_logger.info(f"Serveur TLS en écoute sur {HOST}:{PORT}")
+
     threads = []
 
     try:
         while True:
             conn, addr = server.accept()
-            sys_logger.info(f"Connexion entrante depuis {addr}")
-            t = threading.Thread(target=handle_client, args=(conn, addr))
-            t.start()
-            threads.append(t)
+            try:
+                tls_conn = context.wrap_socket(conn, server_side=True)
+                sys_logger.info(f"Connexion TLS depuis {addr}")
+                t = threading.Thread(target=handle_client, args=(tls_conn, addr))
+                t.start()
+                threads.append(t)
+            except ssl.SSLError as e:
+                sys_logger.warning(f"Erreur SSL : {e}")
     except KeyboardInterrupt:
         sys_logger.info("Arrêt du serveur via KeyboardInterrupt")
     finally:

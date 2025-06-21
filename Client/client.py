@@ -3,6 +3,7 @@ import threading
 import sys
 import signal
 import os
+import ssl
 
 HOST = "127.0.0.1"
 PORT = 5000
@@ -13,7 +14,14 @@ stop_event = threading.Event()
 
 
 def get_infos():
-    print("\nCommandes disponibles :\n- Lancer une discussion        : /talk <user_id>\n- Quitter une conversation     : /talk <other_user_id> ou /exit\n- Clore la connexion           : /quit ou CTRL+C\n- Obtenir les commandes        : /infos\n>", end="")
+    print(
+        "\nCommandes disponibles :\n"
+        "  - Lancer une discussion        : /talk <user_id>\n"
+        "  - Quitter une conversation     : /talk <autre_user_id> ou /exit\n"
+        "  - Clore la connexion           : /quit ou CTRL+C\n"
+        "  - Obtenir la liste des commandes : /infos\n> ",
+        end=""
+    )
 
 def receive_messages(sock):
     while not stop_event.is_set():
@@ -76,12 +84,18 @@ def send_messages(sock):
     stop_event.set()
 
 def main():
-    os.system('cls' if os.name == 'nt' else 'clear')
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    os.system("cls" if os.name == "nt" else "clear")
+
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    context.check_hostname = False
+    context.load_verify_locations("server.crt")
+
+    raw_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        client = context.wrap_socket(raw_socket, server_hostname=HOST)
         client.connect((HOST, PORT))
     except Exception as e:
-        print(f"[!] Échec de la connexion au serveur : {e}")
+        print(f"[!] Échec de la connexion TLS au serveur : {e}")
         return
 
     def handle_interrupt(sig, frame):
