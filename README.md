@@ -46,7 +46,7 @@ python -m pip install -r requirements.txt
 Démarrer le serveur en premier :
 ```bash
 cd Serveur
-python serveur.py
+python server.py
 ```
 
 Eteindre le serveur : `CTRL+C`
