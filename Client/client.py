@@ -11,6 +11,7 @@ PORT = 5000
 current_target = None
 auth_done = threading.Event()
 stop_event = threading.Event()
+current_target = None
 
 
 def get_infos():
@@ -38,13 +39,8 @@ def receive_messages(sock):
             break
     stop_event.set()
 
-current_target = None
-
-
 def send_messages(sock):
     global current_target
-    authenticated = False
-
     while not stop_event.is_set():
         try:
             message = input()
