@@ -4,6 +4,7 @@ import sys
 import signal
 import os
 import ssl
+from datetime import datetime
 
 HOST = "127.0.0.1"
 PORT = 5000
@@ -13,6 +14,7 @@ auth_done = threading.Event()
 stop_event = threading.Event()
 current_target = None
 
+os.makedirs("historique", exist_ok=True)
 
 def get_infos():
     print(
@@ -24,6 +26,13 @@ def get_infos():
         end=""
     )
 
+def save_local_history(dest, message):
+    try:
+        with open(f"historique/{dest}.txt", "a", encoding="utf-8") as f:
+            f.write(message)
+    except Exception as e:
+        print(f"[Erreur] Impossible d’enregistrer l’historique local : {e}")
+
 def receive_messages(sock):
     while not stop_event.is_set():
         try:
@@ -31,8 +40,12 @@ def receive_messages(sock):
             if not message:
                 break
             print(message, end="")
+            if message.startswith("[") and "]" in message:
+                content = message.split("] ", 1)[-1]
+                sender = content.split(":", 1)[0].strip()
+                save_local_history(sender, message)
             sys.stdout.flush()
-            if message.startswith("Bienvenue, "):  # détection du message de bienvenue
+            if message.startswith("Bienvenue, "):
                 get_infos()
                 auth_done.set()
         except:
@@ -50,7 +63,6 @@ def send_messages(sock):
                 sock.send(message.encode())
                 continue
 
-            # Authentifié ici
             if message.lower() == "/quit":
                 stop_event.set()
                 os.system('cls' if os.name == 'nt' else 'clear')
@@ -64,8 +76,15 @@ def send_messages(sock):
                 dest = message[6:].strip()
                 if dest:
                     current_target = dest
+                    local_file = f"historique/{dest}.txt"
+                    if os.path.exists(local_file):
+                        print(f"[Historique avec {dest}]\n")
+                        with open(local_file, "r", encoding="utf-8") as f:
+                            print(f.read())
+
                     sock.send(message.encode())
                 continue
+
             elif message.strip() == "/exit":
                 current_target = None
                 sock.send(message.encode())
@@ -73,6 +92,9 @@ def send_messages(sock):
                 continue
             elif current_target:
                 sock.send(message.encode())
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                formatted = f"[{timestamp}] Moi: {message}\n"
+                save_local_history(current_target, formatted)
             else:
                 print("[!] Pas en conversation. Utilisez /talk <nom>")
         except:

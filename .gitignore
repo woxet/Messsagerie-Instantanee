@@ -196,6 +196,8 @@ cython_debug/
 # Dossiers de données
 conversations/
 logs/
+pending/
+historique/
 
 # Certificats
 *.pem

@@ -13,14 +13,14 @@ PORT = 5000
 
 clients = {}
 lock = threading.Lock()
+stop_server = False
 
 sys_logger = init_sys_logger()
-
-talk_sessions = {}  # { username: destinataire }
+talk_sessions = {}  # {username: destinataire}
 
 os.makedirs("conversations", exist_ok=True)
+os.makedirs("pending", exist_ok=True)
 
-stop_server = False
 def handle_sigint(sig, frame):
     global stop_server
     stop_server = True
@@ -29,9 +29,7 @@ signal.signal(signal.SIGINT, handle_sigint)
 def auth(conn: socket.socket):
     try:
         while True:
-            conn.sendall(
-                "Bienvenue !\n\n1. Inscription\n2. Connexion\n3. Quitter\n> ".encode()
-            )
+            conn.sendall("Bienvenue !\n\n1. Inscription\n2. Connexion\n3. Quitter\n> ".encode())
             choice = conn.recv(1024).decode().strip()
             if choice == "1":
                 conn.sendall("Nom complet:\n> ".encode())
@@ -84,7 +82,6 @@ def handle_client(conn: socket.socket, addr):
             if not message:
                 break
 
-            # Commande /talk
             if message.startswith("/talk "):
                 dest = message[6:].strip()
                 if dest == username:
@@ -100,19 +97,24 @@ def handle_client(conn: socket.socket, addr):
 
                 filename = get_conversation_filename(username, dest)
                 if os.path.exists(filename):
-                    with open(filename, "r", encoding="utf-8") as f:
-                        conn.sendall(f"[Historique avec {dest}]\n{f.read()}".encode())
+                    pass
+                    # with open(filename, "r", encoding="utf-8") as f:
+                    #     conn.sendall(f"[Historique avec {dest}]\n{f.read()}".encode())
                 else:
                     conn.sendall(f"[Système] Nouvelle conversation avec {dest}.\n".encode())
+
+                pending_file = f"pending/{dest}_{username}.txt"
+                if os.path.exists(pending_file):
+                    with open(pending_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            conn.sendall(line.encode())
+                    os.remove(pending_file)
                 continue
 
-            # Commande /exit
             if message == "/exit":
-                other = talk_sessions.get(username)
                 talk_sessions[username] = None
                 continue
 
-            # Message en mode talk
             dest = talk_sessions.get(username)
             if dest:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -122,25 +124,27 @@ def handle_client(conn: socket.socket, addr):
                 with open(filename, "a", encoding="utf-8") as f:
                     f.write(formatted)
 
-                # Envoi direct si les deux sont en talk l’un avec l’autre
                 with lock:
                     if talk_sessions.get(dest) == username and dest in clients:
                         try:
                             clients[dest].sendall(formatted.encode())
                         except Exception as e:
                             sys_logger.warning(f"Échec d'envoi à {dest}: {e}")
+                    else:
+                        pending_file = f"pending/{username}_{dest}.txt"
+                        try:
+                            with open(pending_file, "a", encoding="utf-8") as f:
+                                f.write(formatted)
+                        except Exception as e:
+                            sys_logger.error(f"Erreur d'écriture dans {pending_file} : {e}")
             else:
-                conn.sendall(f"[Système] Pas en conversation. Utilisez /talk <nom>\n".encode())
+                conn.sendall("[Système] Pas en conversation. Utilisez /talk <nom>\n".encode())
 
     finally:
-        # Retirer l'utilisateur courant
         with lock:
             clients.pop(username, None)
-
-            # Libérer aussi la session talk de l'autre s'il y a réciprocité
             other = talk_sessions.get(username)
             talk_sessions.pop(username, None)
-
             if other and talk_sessions.get(other) == username:
                 talk_sessions[other] = None
                 other_conn = clients.get(other)
@@ -150,7 +154,6 @@ def handle_client(conn: socket.socket, addr):
                     except Exception as e:
                         sys_logger.warning(f"Erreur lors de l’envoi au partenaire {other} : {e}")
 
-        # Fermer proprement la socket
         try:
             conn.shutdown(socket.SHUT_RDWR)
         except:
@@ -209,7 +212,6 @@ def main():
         for t in threads:
             t.join()
         sys_logger.info("Tous les threads clients terminés. Serveur arrêté.")
-
 
 if __name__ == "__main__":
     main()
