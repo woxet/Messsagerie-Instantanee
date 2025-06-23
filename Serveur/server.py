@@ -14,22 +14,10 @@ clients = {}
 lock = threading.Lock()
 
 sys_logger = init_sys_logger()
-msg_logger = init_message_logger()
 
 talk_sessions = {}  # { username: destinataire }
 
 os.makedirs("conversations", exist_ok=True)
-
-def broadcast(sender_username, message):
-    timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-    with lock:
-        for username, conn in clients.items():
-            if username != sender_username:
-                try:
-                    conn.sendall(f"[{sender_username}] {message}\n".encode())
-                    log_message(sender_username, username, message, timestamp)
-                except Exception as e:
-                    sys_logger.warning(f"Erreur lors de l'envoi à {username} : {e}")
 
 def auth(conn: socket.socket):
     try:
@@ -161,6 +149,7 @@ def handle_client(conn: socket.socket, addr):
             sys_logger.info(f"{username} s’est déconnecté")
 
 def main():
+    os.system("cls" if os.name == "nt" else "clear")
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, PORT))
     server.listen()

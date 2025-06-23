@@ -5,7 +5,7 @@ from datetime import datetime
 
 LOG_DIR = "./logs"
 LOG_SYS = os.path.join(LOG_DIR, "sys.log")
-LOG_MESSAGES = os.path.join(LOG_DIR, "messages.log")
+# LOG_MESSAGES = os.path.join(LOG_DIR, "messages.log")
 
 
 def ensure_log_dirs():
@@ -29,28 +29,3 @@ def init_sys_logger():
         logger.addHandler(file_handler)
 
     return logger
-
-
-def init_message_logger():
-    ensure_log_dirs()
-    logger = logging.getLogger("messages")
-    logger.setLevel(logging.INFO)
-
-    if not logger.handlers:
-        file_handler = logging.FileHandler(LOG_MESSAGES, mode="a", encoding="utf-8")
-        formatter = logging.Formatter("[%(asctime)s] %(message)s")
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-
-    return logger
-
-
-def log_message(expediteur, destinataire, message, timestamp=None):
-    logger = logging.getLogger("messages")
-    if not logger.handlers:
-        init_message_logger()
-
-    if timestamp is None:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    entry = f"{expediteur} -> {destinataire} : {message}"
-    logger.info(entry)

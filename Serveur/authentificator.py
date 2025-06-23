@@ -21,7 +21,7 @@ def save_users(users):
 def signup(name, user_id, password, conn: socket):
     users = load_users()
     if any(u["user_id"] == user_id for u in users):
-        conn.sendall("Ce nom d'utilisateur existe déjà.".encode())
+        conn.sendall("Ce nom d'utilisateur existe déjà.\n\n".encode())
         return False
 
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
