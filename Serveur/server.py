@@ -3,6 +3,7 @@ import threading
 from datetime import datetime
 import os
 import ssl
+import signal
 
 from logger import *
 from authentificator import *
@@ -18,6 +19,12 @@ sys_logger = init_sys_logger()
 talk_sessions = {}  # { username: destinataire }
 
 os.makedirs("conversations", exist_ok=True)
+
+stop_server = False
+def handle_sigint(sig, frame):
+    global stop_server
+    stop_server = True
+signal.signal(signal.SIGINT, handle_sigint)
 
 def auth(conn: socket.socket):
     try:
@@ -67,7 +74,13 @@ def handle_client(conn: socket.socket, addr):
 
     try:
         while True:
-            message = conn.recv(4096).decode().strip()
+            try:
+                message = conn.recv(4096).decode().strip()
+            except socket.timeout:
+                if stop_server:
+                    break
+                continue
+
             if not message:
                 break
 
@@ -77,7 +90,7 @@ def handle_client(conn: socket.socket, addr):
                 if dest == username:
                     conn.sendall(f"[Système] Vous ne pouvez pas parler à vous-même.\n".encode())
                     continue
-                
+
                 users = load_users()
                 if dest not in (u["user_id"] for u in users):
                     conn.sendall(f"[Système] Utilisateur inconnu.\n".encode())
@@ -98,7 +111,6 @@ def handle_client(conn: socket.socket, addr):
                 other = talk_sessions.get(username)
                 talk_sessions[username] = None
                 continue
-
 
             # Message en mode talk
             dest = talk_sessions.get(username)
@@ -127,8 +139,7 @@ def handle_client(conn: socket.socket, addr):
 
             # Libérer aussi la session talk de l'autre s'il y a réciprocité
             other = talk_sessions.get(username)
-            talk_sessions.pop(username,*
-                               None)
+            talk_sessions.pop(username, None)
 
             if other and talk_sessions.get(other) == username:
                 talk_sessions[other] = None
@@ -153,6 +164,7 @@ def main():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, PORT))
     server.listen()
+    server.settimeout(1.0)
 
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile="server.crt", keyfile="server.key")
@@ -163,20 +175,37 @@ def main():
     threads = []
 
     try:
-        while True:
-            conn, addr = server.accept()
+        while not stop_server:
+            try:
+                conn, addr = server.accept()
+            except socket.timeout:
+                continue
             try:
                 tls_conn = context.wrap_socket(conn, server_side=True)
+                tls_conn.settimeout(5.0)
                 sys_logger.info(f"Connexion TLS depuis {addr}")
                 t = threading.Thread(target=handle_client, args=(tls_conn, addr))
                 t.start()
                 threads.append(t)
             except ssl.SSLError as e:
                 sys_logger.warning(f"Erreur SSL : {e}")
-    except KeyboardInterrupt:
-        sys_logger.info("Arrêt du serveur via KeyboardInterrupt")
     finally:
+        sys_logger.info("Arrêt du serveur via KeyboardInterrupt")
         server.close()
+
+        sys_logger.info("Fermeture des connexions clients...")
+        with lock:
+            for conn in clients.values():
+                try:
+                    conn.sendall(b"[Systeme] Le serveur va s'arreter. Deconnexion...\n")
+                    conn.shutdown(socket.SHUT_RDWR)
+                except:
+                    pass
+                try:
+                    conn.close()
+                except:
+                    pass
+
         for t in threads:
             t.join()
         sys_logger.info("Tous les threads clients terminés. Serveur arrêté.")
