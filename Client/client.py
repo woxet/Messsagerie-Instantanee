@@ -1,10 +1,16 @@
 import socket
 import threading
-import sys
 import signal
 import os
-import ssl
+import json
 from datetime import datetime
+from getpass import getpass
+
+from utils import generate_and_send_bundle
+from Secu.x3dh import X3DHUser
+from Secu.dratchet import *
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives import serialization
 
 HOST = "127.0.0.1"
 PORT = 5000
@@ -12,132 +18,280 @@ PORT = 5000
 current_target = None
 auth_done = threading.Event()
 stop_event = threading.Event()
-current_target = None
+x3dh_self = X3DHUser()
+ratchet_sessions = {}
+ephemeral_keys = {}
+received_bundles = {}
+user_id = None
 
 os.makedirs("historique", exist_ok=True)
+os.makedirs("ratchet_states", exist_ok=True)
 
-def get_infos():
-    print(
-        "\nCommandes disponibles :\n"
-        "  - Lancer une discussion        : /talk <user_id>\n"
-        "  - Quitter une conversation     : /talk <autre_user_id> ou /exit\n"
-        "  - Clore la connexion           : /quit ou CTRL+C\n"
-        "  - Obtenir la liste des commandes : /infos\n> ",
-        end=""
-    )
+def save_ratchet_state(user_id, state):
+    filepath = os.path.join("ratchet_states", f"{user_id}.json")
+    with open(filepath, "w") as f:
+        json.dump(state.to_dict(), f)
+
+def load_ratchet_state(user_id):
+    filepath = os.path.join("ratchet_states", f"{user_id}.json")
+    if not os.path.exists(filepath):
+        return None
+    with open(filepath, "r") as f:
+        data = json.load(f)
+    return State.from_dict(data)
 
 def save_local_history(dest, message):
     try:
         with open(f"historique/{dest}.txt", "a", encoding="utf-8") as f:
             f.write(message)
     except Exception as e:
-        print(f"[Erreur] Impossible d’enregistrer l’historique local : {e}")
+        print(f"[Erreur] Historique local : {e}")
+
+def get_infos():
+    print(
+        "\nCommandes disponibles :\n"
+        "  - Lancer une discussion        : /talk <user_id>\n"
+        "  - Quitter une conversation     : /exit\n"
+        "  - Clore la connexion           : /quit ou CTRL+C\n"
+        "  - Obtenir la liste des commandes : /infos\n> ",
+        end=""
+    )
 
 def receive_messages(sock):
+    global x3dh_self, user_id, current_target
+    sock_file = sock.makefile('r')
+
+    for user_file in os.listdir("ratchet_states"):
+        uid = user_file.replace(".json", "")
+        state = load_ratchet_state(uid)
+        if state:
+            ratchet_sessions[uid] = state
+
     while not stop_event.is_set():
         try:
-            message = sock.recv(4096).decode()
-            if not message:
+            line = sock_file.readline()
+            if not line:
+                print("[*] Connexion au serveur interrompue.")
+                stop_event.set()
                 break
-            print(message, end="")
-            if message.startswith("[") and "]" in message:
-                content = message.split("] ", 1)[-1]
-                sender = content.split(":", 1)[0].strip()
-                save_local_history(sender, message)
-            sys.stdout.flush()
-            if message.startswith("Bienvenue, "):
-                get_infos()
-                auth_done.set()
-        except:
+
+            try:
+                obj = json.loads(line)
+
+                if obj["type"] == "auth_prompt":
+                    print(obj["message"])
+                    for i, option in enumerate(obj["options"], 1):
+                        print(f"{i}. {option.capitalize()}")
+                    print("> ", end="")
+
+                elif obj["type"] in ("register_success", "auth_success"):
+                    print(f"[Système] {obj['message']}")
+                    if obj["type"] == "register_success" and user_id:
+                        x3dh_self = generate_and_send_bundle(sock, user_id)
+                    if obj["type"] == "auth_success":
+                        auth_done.set()
+                        get_infos()
+
+                elif obj["type"] == "system":
+                    print(f"[Système] {obj['message']}")
+                    print("> ", end="")
+
+                elif obj["type"] == "message":
+                    sender = obj["from"]
+                    header_hex = obj["header"]
+                    nonce = bytes.fromhex(obj["nonce"])
+                    ct = bytes.fromhex(obj["ciphertext"])
+                    header = bytes.fromhex(header_hex)
+
+                    if len(header) == 104:
+                        ik_bytes = header[:32]
+                        eph_bytes = header[32:64]
+                        real_header = header[64:]
+
+                        if sender not in ratchet_sessions:
+                            try:
+                                rk = x3dh_self.compute_shared_key_receiver(ik_bytes, eph_bytes)
+                                eph_pub = X25519PublicKey.from_public_bytes(eph_bytes)
+                                state = RatchetInit(
+                                    is_initiator=False,
+                                    root_key=rk,
+                                    dh_self_priv=x3dh_self.SPK_priv,
+                                    dh_remote_pub=eph_pub
+                                )
+                                DHRatchet(state, eph_pub)
+                                ratchet_sessions[sender] = state
+                                save_ratchet_state(sender, state)
+                                print(f"[+] Session sécurisée avec {sender}")
+                            except Exception as e:
+                                print(f"[Erreur] Session récepteur : {e}")
+                                continue
+                        header = real_header
+
+                    if len(header) != 40:
+                        print(f"[Erreur] Longueur header inattendue : {len(header)} octets")
+                        continue
+
+                    try:
+                        plaintext = RatchetDecrypt(ratchet_sessions[sender], header, nonce, ct, AD=header)
+                    except Exception as e:
+                        print(f"[Erreur] Déchiffrement avec {sender} : {type(e).__name__} – {e}")
+                        continue
+
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    msg = f"[{timestamp}] {sender}: {plaintext.decode()}\n"
+                    print(msg, end="")
+                    save_local_history(sender, msg)
+
+                elif obj["type"] == "bundle_response":
+                    bundle = obj["bundle"]
+                    received_bundles[bundle["user_id"]] = bundle
+                    current = bundle["user_id"]
+                    if os.path.exists(f"historique/{current}.txt"):
+                        with open(f"historique/{current}.txt", "r", encoding="utf-8") as f:
+                            print(f"[Historique avec {current}]\n{f.read()}")
+                    else:
+                        print(f"[Système] Nouvelle conversation avec {current}.")
+                    print("[Système] En attente de message pour établir session...")
+
+                elif obj["type"] == "confirm":
+                    print(f"[OK] {obj['message']}")
+
+                else:
+                    print(line)
+
+            except json.JSONDecodeError:
+                print("[Système] [Erreur] Format JSON invalide.")
+                print(line)
+
+        except Exception as e:
+            print(f"[!] Erreur réception : {e}")
             break
+
     stop_event.set()
 
 def send_messages(sock):
-    global current_target
+    global current_target, user_id
+
     while not stop_event.is_set():
         try:
-            message = input()
+            message = input().strip()
 
             if not auth_done.is_set():
-                # On laisse uniquement passer les choix initiaux tant qu'on n'est pas connecté
-                sock.send(message.encode())
+                if message == "1":
+                    name = input("Nom complet: ").strip()
+                    user_id = input("Nom d'utilisateur: ").strip()
+                    password = getpass("Mot de passe: ").strip()
+                    req = {"type": "register", "name": name, "user_id": user_id, "password": password}
+                    sock.sendall((json.dumps(req) + "\n").encode())
+                elif message == "2":
+                    user_id = input("Nom d'utilisateur: ").strip()
+                    password = getpass("Mot de passe: ").strip()
+                    req = {"type": "login", "user_id": user_id, "password": password}
+                    sock.sendall((json.dumps(req) + "\n").encode())
+                elif message == "3":
+                    stop_event.set()
+                    return
+                else:
+                    print("[!] Choix invalide.")
                 continue
 
             if message.lower() == "/quit":
                 stop_event.set()
-                os.system('cls' if os.name == 'nt' else 'clear')
-                get_infos()
                 break
+
             elif message.lower() == "/infos":
                 get_infos()
                 continue
-            elif message.startswith("/talk "):
-                os.system('cls' if os.name == 'nt' else 'clear')
-                dest = message[6:].strip()
-                if dest:
-                    current_target = dest
-                    local_file = f"historique/{dest}.txt"
-                    if os.path.exists(local_file):
-                        print(f"[Historique avec {dest}]\n")
-                        with open(local_file, "r", encoding="utf-8") as f:
-                            print(f.read())
 
-                    sock.send(message.encode())
+            elif message.startswith("/talk "):
+                dest = message[6:].strip()
+                current_target = dest
+                req = {"type": "get_bundle", "target": dest}
+                sock.sendall((json.dumps(req) + "\n").encode())
                 continue
 
-            elif message.strip() == "/exit":
+            elif message.lower() == "/exit":
                 current_target = None
-                sock.send(message.encode())
                 print("[*] Conversation fermée.")
                 continue
+
             elif current_target:
-                sock.send(message.encode())
+                if current_target not in ratchet_sessions:
+                    bundle = received_bundles.get(current_target)
+                    if not bundle:
+                        print("[!] Aucun bundle reçu. Réessayez avec /talk.")
+                        continue
+                    eph_priv = X25519PrivateKey.generate()
+                    ephemeral_keys[current_target] = eph_priv
+                    rk = x3dh_self.compute_shared_key_initiator({
+                        "IK": bytes.fromhex(bundle["IK"]),
+                        "SPK": bytes.fromhex(bundle["SPK"]),
+                        "OPK": bytes.fromhex(bundle["OPK"]),
+                    }, eph_priv)
+                    SPK_pub = X25519PublicKey.from_public_bytes(bytes.fromhex(bundle["SPK"]))
+                    state = RatchetInit(True, rk, dh_remote_pub=SPK_pub)
+                    ratchet_sessions[current_target] = state
+                    save_ratchet_state(current_target, state)
+                    print("[Système] Session initiée avec", current_target)
+
+                st = ratchet_sessions[current_target]
+                header, nonce, ct = RatchetEncrypt(st, message.encode())
+
+                if current_target in ephemeral_keys:
+                    ik_bytes = x3dh_self.IK_pub.public_bytes(
+                        encoding=serialization.Encoding.Raw,
+                        format=serialization.PublicFormat.Raw
+                    )
+                    eph_pub = ephemeral_keys[current_target].public_key().public_bytes(
+                        encoding=serialization.Encoding.Raw,
+                        format=serialization.PublicFormat.Raw
+                    )
+                    header = ik_bytes + eph_pub + header
+                    del ephemeral_keys[current_target]
+
+                req = {
+                    "type": "message",
+                    "from": user_id,
+                    "to": current_target,
+                    "header": header.hex(),
+                    "nonce": nonce.hex(),
+                    "ciphertext": ct.hex()
+                }
+                sock.sendall((json.dumps(req) + "\n").encode())
+
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 formatted = f"[{timestamp}] Moi: {message}\n"
                 save_local_history(current_target, formatted)
             else:
                 print("[!] Pas en conversation. Utilisez /talk <nom>")
-        except:
+
+        except Exception as e:
+            print(f"[!] Erreur d’envoi : {e}")
             break
+
     stop_event.set()
 
 def main():
     os.system("cls" if os.name == "nt" else "clear")
-
-    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-    context.check_hostname = False
-    context.load_verify_locations("server.crt")
-
-    raw_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        client = context.wrap_socket(raw_socket, server_hostname=HOST)
-        client.connect((HOST, PORT))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((HOST, PORT))
     except Exception as e:
-        print(f"[!] Échec de la connexion TLS au serveur : {e}")
+        print(f"[!] Connexion échouée : {e}")
         return
 
-    def handle_interrupt(sig, frame):
-        stop_event.set()
-
-    signal.signal(signal.SIGINT, handle_interrupt)
-
-    recv_thread = threading.Thread(target=receive_messages, args=(client,), daemon=True)
-    send_thread = threading.Thread(target=send_messages, args=(client,), daemon=True)
-
-    recv_thread.start()
-    send_thread.start()
+    signal.signal(signal.SIGINT, lambda s, f: stop_event.set())
+    threading.Thread(target=receive_messages, args=(sock,), daemon=True).start()
+    threading.Thread(target=send_messages, args=(sock,), daemon=True).start()
 
     while not stop_event.is_set():
-        try:
-            recv_thread.join(timeout=0.5)
-            send_thread.join(timeout=0.5)
-        except:
-            break
+        pass
+
     try:
-        client.shutdown(socket.SHUT_RDWR)
+        sock.shutdown(socket.SHUT_RDWR)
     except:
         pass
-    client.close()
+    sock.close()
     print("[*] Déconnecté.")
 
 if __name__ == "__main__":

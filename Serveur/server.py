@@ -1,8 +1,8 @@
 import socket
 import threading
-from datetime import datetime
 import os
-import ssl
+import json
+from datetime import datetime
 import signal
 
 from logger import *
@@ -12,13 +12,14 @@ HOST = "127.0.0.1"
 PORT = 5000
 
 clients = {}
+talk_sessions = {}  # user -> current peer
+talk_ready = {}     # user -> True if /talk has been issued
 lock = threading.Lock()
 stop_server = False
 
 sys_logger = init_sys_logger()
-talk_sessions = {}  # {username: destinataire}
-
 os.makedirs("conversations", exist_ok=True)
+os.makedirs("bundles", exist_ok=True)
 os.makedirs("pending", exist_ok=True)
 
 def handle_sigint(sig, frame):
@@ -26,141 +27,159 @@ def handle_sigint(sig, frame):
     stop_server = True
 signal.signal(signal.SIGINT, handle_sigint)
 
-def auth(conn: socket.socket):
-    try:
-        while True:
-            conn.sendall("Bienvenue !\n\n1. Inscription\n2. Connexion\n3. Quitter\n> ".encode())
-            choice = conn.recv(1024).decode().strip()
-            if choice == "1":
-                conn.sendall("Nom complet:\n> ".encode())
-                name = conn.recv(1024).decode().strip()
-                conn.sendall("Nom d'utilisateur:\n> ".encode())
-                user_id = conn.recv(1024).decode().strip()
-                conn.sendall("Mot de passe:\n> ".encode())
-                password = conn.recv(1024).decode().strip()
-                if signup(name, user_id, password, conn):
-                    continue
-            elif choice == "2":
-                conn.sendall("Nom d'utilisateur:\n> ".encode())
-                user_id = conn.recv(1024).decode().strip()
-                conn.sendall("Mot de passe:\n> ".encode())
-                password = conn.recv(1024).decode().strip()
-                if login(user_id, password, conn):
-                    return user_id
-            elif choice == "3":
-                conn.sendall("Bye !\n".encode())
-                return None
-            else:
-                conn.sendall("Choix invalide.\n".encode())
-    except Exception as e:
-        sys_logger.error(f"Erreur lors de l'authentification : {e}")
-        return None
-
 def get_conversation_filename(user1, user2):
-    users = sorted([user1, user2])
-    return f"conversations/{users[0]}__{users[1]}.txt"
+    return f"conversations/{'__'.join(sorted([user1, user2]))}.txt"
+
+def send_json(conn, obj):
+    try:
+        conn.sendall((json.dumps(obj) + "\n").encode())
+    except:
+        pass
 
 def handle_client(conn: socket.socket, addr):
-    username = auth(conn)
-    if username is None:
-        conn.close()
-        return
-
-    with lock:
-        clients[username] = conn
-    talk_sessions[username] = None
-
+    username = None
     try:
-        while True:
-            try:
-                message = conn.recv(4096).decode().strip()
-            except socket.timeout:
-                if stop_server:
-                    break
-                continue
+        send_json(conn, {
+            "type": "auth_prompt",
+            "message": "Bienvenue ! Veuillez vous inscrire ou vous connecter.",
+            "options": ["Inscription", "Connexion", "Quitter"]
+        })
 
-            if not message:
+        while True:
+            line = conn.makefile().readline()
+            if not line:
                 break
 
-            if message.startswith("/talk "):
-                dest = message[6:].strip()
-                if dest == username:
-                    conn.sendall(f"[Système] Vous ne pouvez pas parler à vous-même.\n".encode())
-                    continue
-
-                users = load_users()
-                if dest not in (u["user_id"] for u in users):
-                    conn.sendall(f"[Système] Utilisateur inconnu.\n".encode())
-                    continue
-
-                talk_sessions[username] = dest
-
-                filename = get_conversation_filename(username, dest)
-                if os.path.exists(filename):
-                    pass
-                    # with open(filename, "r", encoding="utf-8") as f:
-                    #     conn.sendall(f"[Historique avec {dest}]\n{f.read()}".encode())
-                else:
-                    conn.sendall(f"[Système] Nouvelle conversation avec {dest}.\n".encode())
-
-                pending_file = f"pending/{dest}_{username}.txt"
-                if os.path.exists(pending_file):
-                    with open(pending_file, "r", encoding="utf-8") as f:
-                        for line in f:
-                            conn.sendall(line.encode())
-                    os.remove(pending_file)
+            try:
+                data = json.loads(line.strip())
+            except json.JSONDecodeError:
+                send_json(conn, {"type": "system", "message": "[Erreur] Format JSON invalide."})
                 continue
 
-            if message == "/exit":
-                talk_sessions[username] = None
+            req_type = data.get("type")
+            if not req_type:
+                send_json(conn, {"type": "system", "message": "[Erreur] Champ 'type' manquant."})
                 continue
 
-            dest = talk_sessions.get(username)
-            if dest:
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                formatted = f"[{timestamp}] {username}: {message}\n"
-                filename = get_conversation_filename(username, dest)
-
-                with open(filename, "a", encoding="utf-8") as f:
-                    f.write(formatted)
-
-                with lock:
-                    if talk_sessions.get(dest) == username and dest in clients:
-                        try:
-                            clients[dest].sendall(formatted.encode())
-                        except Exception as e:
-                            sys_logger.warning(f"Échec d'envoi à {dest}: {e}")
+            match req_type:
+                case "register":
+                    name = data.get("name", "")
+                    username = data.get("user_id", "")
+                    password = data.get("password", "")
+                    if signup(name, username, password, conn):
+                        send_json(conn, {"type": "register_success", "message": "Inscription réussie."})
                     else:
-                        pending_file = f"pending/{username}_{dest}.txt"
-                        try:
-                            with open(pending_file, "a", encoding="utf-8") as f:
-                                f.write(formatted)
-                        except Exception as e:
-                            sys_logger.error(f"Erreur d'écriture dans {pending_file} : {e}")
-            else:
-                conn.sendall("[Système] Pas en conversation. Utilisez /talk <nom>\n".encode())
+                        username = None
+                        send_json(conn, {"type": "system", "message": "[Erreur] Ce nom d'utilisateur existe déjà."})
+                    continue
+
+                case "login":
+                    username = data.get("user_id", "")
+                    password = data.get("password", "")
+                    if login(username, password, conn):
+                        send_json(conn, {"type": "auth_success", "message": f"Bienvenue, {username} !"})
+                        with lock:
+                            clients[username] = conn
+                            talk_sessions[username] = None
+                            talk_ready[username] = False
+                    else:
+                        username = None
+                        send_json(conn, {"type": "system", "message": "[Erreur] Identifiants invalides."})
+                    continue
+
+                case "post_bundle":
+                    uid = data.get("user_id")
+                    try:
+                        with open(f"bundles/{uid}.json", "w") as f:
+                            json.dump({
+                                "IK": data["IK"],
+                                "SPK": data["SPK"],
+                                "OPK": data["OPK"]
+                            }, f)
+                        send_json(conn, {"type": "bundle_ack"})
+                        sys_logger.info(f"Bundle reçu pour {uid}")
+                    except Exception as e:
+                        send_json(conn, {"type": "system", "message": f"[Erreur] Sauvegarde bundle : {e}"})
+                    continue
+
+                case "get_bundle":
+                    target = data.get("target")
+                    talk_ready[username] = True
+                    talk_sessions[username] = target
+
+                    bundle_path = f"bundles/{target}.json"
+                    if not os.path.exists(bundle_path):
+                        send_json(conn, {"type": "system", "message": "[!] Bundle introuvable."})
+                    else:
+                        with open(bundle_path, "r") as f:
+                            bundle = json.load(f)
+                        bundle["user_id"] = target
+                        send_json(conn, {
+                            "type": "bundle_response",
+                            "from": target,
+                            "bundle": bundle
+                        })
+
+                        pending_file = f"pending/{username}_{target}.txt"
+                        if os.path.exists(pending_file):
+                            with open(pending_file, "r", encoding="utf-8") as f:
+                                for line in f:
+                                    send_json(conn, json.loads(line.strip()))
+                            os.remove(pending_file)
+                    continue
+
+                case "message":
+                    sender = data.get("from")
+                    dest = data.get("to")
+                    header = data.get("header")
+                    nonce = data.get("nonce")
+                    ciphertext = data.get("ciphertext")
+
+                    message_data = {
+                        "type": "message",
+                        "from": sender,
+                        "to": dest,
+                        "header": header,
+                        "nonce": nonce,
+                        "ciphertext": ciphertext
+                    }
+
+                    with lock:
+                        if dest in clients and talk_ready.get(dest, False) and talk_sessions.get(dest) == sender:
+                            try:
+                                send_json(clients[dest], message_data)
+                                sys_logger.info(f"Message transmis de {sender} à {dest}")
+                            except Exception as e:
+                                print(f"[DEBUG] Erreur d'envoi direct à {dest} : {e}")
+                        else:
+                            pending_path = f"pending/{dest}_{sender}.txt"
+                            with open(pending_path, "a", encoding="utf-8") as f:
+                                f.write(json.dumps(message_data) + "\n")
+                            print(f"[DEBUG] Message stocké en attente pour {dest}")
+                    continue
+
+                case "quit":
+                    break
+
+                case _:
+                    send_json(conn, {"type": "system", "message": "[!] Type de requête inconnu."})
+
+    except Exception as e:
+        sys_logger.error(f"[!] Erreur pour {addr}: {e}")
 
     finally:
-        with lock:
-            clients.pop(username, None)
-            other = talk_sessions.get(username)
-            talk_sessions.pop(username, None)
-            if other and talk_sessions.get(other) == username:
-                talk_sessions[other] = None
-                other_conn = clients.get(other)
-                if other_conn:
-                    try:
-                        other_conn.sendall(f"[Système] {username} s’est déconnecté. Conversation terminée.\n".encode())
-                    except Exception as e:
-                        sys_logger.warning(f"Erreur lors de l’envoi au partenaire {other} : {e}")
+        if username:
+            with lock:
+                clients.pop(username, None)
+                talk_sessions.pop(username, None)
+                talk_ready.pop(username, None)
+            sys_logger.info(f"{username} déconnecté")
 
         try:
             conn.shutdown(socket.SHUT_RDWR)
         except:
             pass
         conn.close()
-        if username:
-            sys_logger.info(f"{username} s’est déconnecté")
 
 def main():
     os.system("cls" if os.name == "nt" else "clear")
@@ -169,11 +188,8 @@ def main():
     server.listen()
     server.settimeout(1.0)
 
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(certfile="server.crt", keyfile="server.key")
-
     sys_logger.info(f"Serveur PID : {os.getpid()}")
-    sys_logger.info(f"Serveur TLS en écoute sur {HOST}:{PORT}")
+    sys_logger.info(f"Écoute sur {HOST}:{PORT}")
 
     threads = []
 
@@ -181,17 +197,13 @@ def main():
         while not stop_server:
             try:
                 conn, addr = server.accept()
-            except socket.timeout:
-                continue
-            try:
-                tls_conn = context.wrap_socket(conn, server_side=True)
-                tls_conn.settimeout(5.0)
-                sys_logger.info(f"Connexion TLS depuis {addr}")
-                t = threading.Thread(target=handle_client, args=(tls_conn, addr))
+                sys_logger.info(f"Connexion depuis {addr}")
+                t = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
                 t.start()
                 threads.append(t)
-            except ssl.SSLError as e:
-                sys_logger.warning(f"Erreur SSL : {e}")
+            except socket.timeout:
+                continue
+
     finally:
         sys_logger.info("Arrêt du serveur via KeyboardInterrupt")
         server.close()
@@ -211,6 +223,7 @@ def main():
 
         for t in threads:
             t.join()
+
         sys_logger.info("Tous les threads clients terminés. Serveur arrêté.")
 
 if __name__ == "__main__":
