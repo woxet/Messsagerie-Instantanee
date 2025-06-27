@@ -28,7 +28,6 @@ def signup(name, user_id, password, conn: socket):
     user = {"id": len(users), "name": name, "user_id": user_id, "pass": hashed}
     users.append(user)
     save_users(users)
-    conn.sendall("Inscription réussie.".encode())
     return True
 
 def login(user_id, password, conn: socket):
@@ -36,7 +35,6 @@ def login(user_id, password, conn: socket):
     for user in users:
         if user["user_id"] == user_id:
             if bcrypt.checkpw(password.encode(), user["pass"].encode()):
-                conn.sendall(f"Bienvenue, {user['name']} !\n".encode())
                 return True
             else:
                 conn.sendall("Mot de passe incorrect.\n".encode())
