@@ -65,6 +65,8 @@ Commandes à connaitre :
 - Obtenir les commandes : `/infos`
 
 ---
-## Documentation
+## Documentation sécurité
+[TLS/SSL](https://www.cloudflare.com/fr-fr/learning/ssl/transport-layer-security-tls/) (CloudFlare)
+[X3DH](https://signal.org/docs/specifications/x3dh/) (Signal)
 [Double Ratchet](https://fr.wikipedia.org/wiki/Algorithme_%C3%A0_Double_Ratchet) (Wikipédia)
 [Double Ratchet](https://signal.org/docs/specifications/doubleratchet/doubleratchet.pdf) (Signal)
