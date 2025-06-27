@@ -1,0 +1,7 @@
+Chaque mot de passe est égal au nom d'utilisateur associé.
+
+                if message.strip().startswith("2"):
+                    username = input().strip()
+                    sock.send(username.encode())
+                    password = getpass().strip()
+                    sock.send(password.encode())
