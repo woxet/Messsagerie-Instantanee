@@ -26,6 +26,7 @@ user_id = None
 
 os.makedirs("historique", exist_ok=True)
 os.makedirs("ratchet_states", exist_ok=True)
+os.makedirs("keys", exist_ok=True)
 
 def save_ratchet_state(user_id, state):
     filepath = os.path.join("ratchet_states", f"{user_id}.json")
@@ -61,6 +62,7 @@ def receive_messages(sock):
     global x3dh_self, user_id, current_target
     sock_file = sock.makefile('r')
 
+    # Chargement des états Ratchet précédemment enregistrés
     for user_file in os.listdir("ratchet_states"):
         uid = user_file.replace(".json", "")
         state = load_ratchet_state(uid)
@@ -101,34 +103,44 @@ def receive_messages(sock):
                     header_hex = obj["header"]
                     nonce = bytes.fromhex(obj["nonce"])
                     ct = bytes.fromhex(obj["ciphertext"])
-                    header = bytes.fromhex(header_hex)
+                    
+                    try:
+                        full_header = bytes.fromhex(header_hex)
+                    except Exception as e:
+                        print(f"[Erreur] Header invalide de {sender} : {e}")
+                        continue
 
-                    if len(header) == 104:
-                        ik_bytes = header[:32]
-                        eph_bytes = header[32:64]
-                        real_header = header[64:]
+                    # Cas où le message est un premier message avec session X3DH intégrée
+                    if len(full_header) == 104:
+                        ik_bytes = full_header[:32]
+                        eph_bytes = full_header[32:64]
+                        real_header = full_header[64:]
 
-                        if sender not in ratchet_sessions:
-                            try:
-                                rk = x3dh_self.compute_shared_key_receiver(ik_bytes, eph_bytes)
-                                eph_pub = X25519PublicKey.from_public_bytes(eph_bytes)
-                                state = RatchetInit(
-                                    is_initiator=False,
-                                    root_key=rk,
-                                    dh_self_priv=x3dh_self.SPK_priv,
-                                    dh_remote_pub=eph_pub
-                                )
-                                DHRatchet(state, eph_pub)
-                                ratchet_sessions[sender] = state
-                                save_ratchet_state(sender, state)
-                                print(f"[+] Session sécurisée avec {sender}")
-                            except Exception as e:
-                                print(f"[Erreur] Session récepteur : {e}")
-                                continue
+                        try:
+                            rk = x3dh_self.compute_shared_key_receiver(ik_bytes, eph_bytes)
+                            eph_pub = X25519PublicKey.from_public_bytes(eph_bytes)
+                            state = RatchetInit(
+                                is_initiator=False,
+                                root_key=rk,
+                                dh_self_priv=x3dh_self.SPK_priv,
+                                dh_remote_pub=eph_pub
+                            )
+                            DHRatchet(state, eph_pub)
+                            ratchet_sessions[sender] = state
+                            save_ratchet_state(sender, state)
+                            print(f"[+] Session réceptrice sécurisée avec {sender}")
+                        except Exception as e:
+                            print(f"[Erreur] Échec session récepteur : {type(e).__name__} – {e}")
+                            continue
+
                         header = real_header
 
-                    if len(header) != 40:
-                        print(f"[Erreur] Longueur header inattendue : {len(header)} octets")
+                    else:
+                        # Header classique
+                        header = full_header
+
+                    if sender not in ratchet_sessions:
+                        print(f"[!] Aucune session active avec {sender} pour déchiffrement.")
                         continue
 
                     try:
@@ -141,6 +153,7 @@ def receive_messages(sock):
                     msg = f"[{timestamp}] {sender}: {plaintext.decode()}\n"
                     print(msg, end="")
                     save_local_history(sender, msg)
+
 
                 elif obj["type"] == "bundle_response":
                     bundle = obj["bundle"]
@@ -160,7 +173,7 @@ def receive_messages(sock):
                     print(line)
 
             except json.JSONDecodeError:
-                print("[Système] [Erreur] Format JSON invalide.")
+                print("[Système] Format JSON invalide.")
                 print(line)
 
         except Exception as e:
@@ -168,6 +181,7 @@ def receive_messages(sock):
             break
 
     stop_event.set()
+
 
 def send_messages(sock):
     global current_target, user_id
@@ -217,18 +231,17 @@ def send_messages(sock):
 
             elif current_target:
                 if current_target not in ratchet_sessions:
-                    bundle = received_bundles.get(current_target)
-                    if not bundle:
+                    if current_target not in received_bundles:
                         print("[!] Aucun bundle reçu. Réessayez avec /talk.")
                         continue
                     eph_priv = X25519PrivateKey.generate()
                     ephemeral_keys[current_target] = eph_priv
                     rk = x3dh_self.compute_shared_key_initiator({
-                        "IK": bytes.fromhex(bundle["IK"]),
-                        "SPK": bytes.fromhex(bundle["SPK"]),
-                        "OPK": bytes.fromhex(bundle["OPK"]),
+                        "IK": bytes.fromhex(received_bundles[current_target]["IK"]),
+                        "SPK": bytes.fromhex(received_bundles[current_target]["SPK"]),
+                        "OPK": bytes.fromhex(received_bundles[current_target]["OPK"]),
                     }, eph_priv)
-                    SPK_pub = X25519PublicKey.from_public_bytes(bytes.fromhex(bundle["SPK"]))
+                    SPK_pub = X25519PublicKey.from_public_bytes(bytes.fromhex(received_bundles[current_target]["SPK"]))
                     state = RatchetInit(True, rk, dh_remote_pub=SPK_pub)
                     ratchet_sessions[current_target] = state
                     save_ratchet_state(current_target, state)

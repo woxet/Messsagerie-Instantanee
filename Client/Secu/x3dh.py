@@ -92,6 +92,14 @@ class X3DHUser:
         print(f"[X3DH Receiver] Shared key       : {shared_key.hex()}")
         return shared_key
 
+    def deserialize_bundle(bundle: dict) -> dict:
+        return {
+            "IK": X25519PublicKey.from_public_bytes(bytes.fromhex(bundle["IK"])),
+            "SPK": X25519PublicKey.from_public_bytes(bytes.fromhex(bundle["SPK"])),
+            "OPK": X25519PublicKey.from_public_bytes(bytes.fromhex(bundle["OPK"])),
+            "SPK_sig": bytes.fromhex(bundle["SPK_sig"])
+        }
+
 
 if __name__ == "__main__":
     bob = X3DHUser()

@@ -65,6 +65,14 @@ Commandes à connaitre :
 - Obtenir les commandes : `/infos`
 
 ---
+## Exemple d'utilisation
+1. Ouvrir 3 terminaux
+2. Lancer le serveur et 2 clients
+3. Envoyer `1` pour s'inscrire (Exemple : `Alice`, `alice`, `alice` et `Bob`, `bob`, `bob`)
+4. Après validation Envoyer `2` pour se connecter et rentrer les identifiants
+5. Envoyer `/talk <user>` (Ex : `/talk alice`) 
+6. Commencer à discuter en envoyant un message (`Hello bob !`)
+---
 ## Documentation sécurité
 [TLS/SSL](https://www.cloudflare.com/fr-fr/learning/ssl/transport-layer-security-tls/) (CloudFlare)
 [X3DH](https://signal.org/docs/specifications/x3dh/x3dh.pdf) (Signal)

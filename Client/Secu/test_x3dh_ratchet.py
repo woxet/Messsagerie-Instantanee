@@ -1,5 +1,5 @@
-from Secu.x3dh import X3DHUser
-from Secu.dratchet import *
+from x3dh import X3DHUser
+from dratchet import *
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 
